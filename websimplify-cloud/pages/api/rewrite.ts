@@ -1,7 +1,7 @@
 /* ================================================================
    WebSimplify – /api/rewrite
    Accepts { items: [{id, text}] }, returns { items: [{id, text}] }
-   Uses Groq API (free tier) with Llama to rewrite text.
+   Uses Groq (free) or OpenAI as fallback to rewrite text.
    ================================================================ */
 
 import type { NextApiRequest, NextApiResponse } from "next";
@@ -30,16 +30,31 @@ interface ErrorResponse {
   error: string;
 }
 
-/* ---------- Groq client (OpenAI-compatible) ------------------------ */
-function getClient(): OpenAI {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    throw new Error("GROQ_API_KEY not configured");
+/* ---------- AI client ---------------------------------------------- */
+
+function getClient(): { client: OpenAI; model: string } {
+  // Try Groq first (free tier)
+  if (process.env.GROQ_API_KEY) {
+    return {
+      client: new OpenAI({
+        apiKey: process.env.GROQ_API_KEY,
+        baseURL: "https://api.groq.com/openai/v1",
+      }),
+      model: "llama-3.3-70b-versatile",
+    };
   }
-  return new OpenAI({
-    apiKey,
-    baseURL: "https://api.groq.com/openai/v1",
-  });
+
+  // Fall back to OpenAI
+  if (process.env.OPENAI_API_KEY) {
+    return {
+      client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+      model: "gpt-4o-mini",
+    };
+  }
+
+  throw new Error(
+    "No API key configured. Set GROQ_API_KEY (free) or OPENAI_API_KEY in Vercel env vars."
+  );
 }
 
 /* ---------- system prompt ------------------------------------------ */
@@ -119,14 +134,14 @@ export default async function handler(
     return res.status(200).json({ items: [] });
   }
 
-  // Call Groq (Llama)
+  // Call AI
   try {
-    const client = getClient();
+    const { client, model } = getClient();
 
     const userMessage = JSON.stringify(cleanItems);
 
     const completion = await client.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      model,
       temperature: 0.3,
       max_tokens: 4000,
       messages: [
@@ -166,6 +181,6 @@ export default async function handler(
     return res.status(200).json({ items: result });
   } catch (err: any) {
     console.error("[rewrite] Error:", err.message);
-    return res.status(500).json({ error: "Rewrite failed" });
+    return res.status(500).json({ error: err.message || "Rewrite failed" });
   }
 }

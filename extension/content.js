@@ -1,6 +1,6 @@
 /* ================================================================
    WebSimplify – Content Script
-   Handles: Minimal UI Skin, AI Rewrite, Reader Overlay, Restore
+   Handles: UI Skin, AI Rewrite, Reader Overlay, Restore
    ================================================================ */
 
 (() => {
@@ -10,6 +10,7 @@
   const STATE = {
     simplified: false,
     originalTexts: new Map(),   // node → original string
+    originalStyles: new Map(),  // element → original inline styles
     mutationObserver: null,
     pendingNodes: new Set(),     // nodes waiting for rewrite
     readerOverlayEl: null,
@@ -32,7 +33,6 @@
 
   /* ---------- helpers ---------------------------------------------- */
 
-  /** True if the node or any ancestor is contenteditable */
   function isEditable(node) {
     let el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
     while (el) {
@@ -42,7 +42,6 @@
     return false;
   }
 
-  /** True if a text node should be rewritten */
   function isRewritable(textNode) {
     const parent = textNode.parentElement;
     if (!parent) return false;
@@ -58,7 +57,6 @@
     return true;
   }
 
-  /** Collect rewritable text nodes from a root */
   function collectTextNodes(root) {
     const nodes = [];
     const walker = document.createTreeWalker(
@@ -78,29 +76,40 @@
     return nodes;
   }
 
+  function escapeHTML(str) {
+    const div = document.createElement("div");
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
   /* ---------- Toast (floating status) ------------------------------- */
 
-  function showToast(text, showSpinner = false) {
+  function showToast(text, type = "info") {
     if (!STATE.toastEl) {
       STATE.toastEl = document.createElement("div");
       STATE.toastEl.id = "ws-status-toast";
       document.body.appendChild(STATE.toastEl);
     }
-    STATE.toastEl.innerHTML =
-      (showSpinner ? '<div class="ws-spinner"></div>' : '') +
-      `<span>${escapeHTML(text)}</span>`;
+    const icon = type === "error" ? "!" :
+                 type === "success" ? "\u2713" : "";
+    const spinner = type === "info" ? '<div class="ws-spinner"></div>' : '';
+    const iconHtml = icon ? `<span class="ws-toast-icon ws-toast-${type}">${icon}</span>` : '';
+    STATE.toastEl.innerHTML = spinner + iconHtml + `<span>${escapeHTML(text)}</span>`;
+    STATE.toastEl.className = "ws-toast-base";
+    if (type === "error") STATE.toastEl.classList.add("ws-toast-err");
     // Force reflow then show
     void STATE.toastEl.offsetHeight;
     STATE.toastEl.classList.add("ws-visible");
   }
 
-  function updateToast(text) {
-    if (!STATE.toastEl) return;
-    const span = STATE.toastEl.querySelector("span");
+  function updateToast(text, type) {
+    if (!STATE.toastEl) return showToast(text, type);
+    if (type) return showToast(text, type);
+    const span = STATE.toastEl.querySelector("span:last-child");
     if (span) span.textContent = text;
   }
 
-  function hideToast(delay = 2000) {
+  function hideToast(delay = 2500) {
     if (!STATE.toastEl) return;
     setTimeout(() => {
       if (STATE.toastEl) {
@@ -115,18 +124,18 @@
     }, delay);
   }
 
-  /* ---------- Minimal UI Skin --------------------------------------- */
+  /* ---------- UI Skin ----------------------------------------------- */
 
   const SKIN_CLASS = "ws-simplified";
 
   function buildSkinCSS() {
     return `
       /* ============================================================
-         WebSimplify – Clean Minimal Skin
+         WebSimplify – Page Skin
          ============================================================ */
 
-      /* --- Floating status toast --- */
-      #ws-status-toast {
+      /* --- Toast --- */
+      .ws-toast-base {
         position: fixed !important;
         bottom: 24px !important;
         right: 24px !important;
@@ -134,11 +143,11 @@
         background: #1e293b !important;
         color: #f1f5f9 !important;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
-        font-size: 13px !important;
+        font-size: 14px !important;
         font-weight: 500 !important;
-        padding: 10px 18px !important;
-        border-radius: 10px !important;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.08) !important;
+        padding: 12px 20px !important;
+        border-radius: 12px !important;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.08) !important;
         display: flex !important;
         align-items: center !important;
         gap: 10px !important;
@@ -148,63 +157,109 @@
         pointer-events: none !important;
         line-height: 1.4 !important;
         letter-spacing: 0 !important;
+        max-width: 400px !important;
       }
 
-      #ws-status-toast.ws-visible {
+      .ws-toast-base.ws-visible {
         opacity: 1 !important;
         transform: translateY(0) !important;
       }
 
-      #ws-status-toast .ws-spinner {
-        width: 14px !important;
-        height: 14px !important;
-        border: 2px solid rgba(255,255,255,0.15) !important;
+      .ws-toast-base.ws-toast-err {
+        background: #7f1d1d !important;
+        border: 1px solid #dc2626 !important;
+      }
+
+      .ws-toast-base .ws-spinner {
+        width: 16px !important;
+        height: 16px !important;
+        border: 2px solid rgba(255,255,255,0.2) !important;
         border-top-color: #60a5fa !important;
         border-radius: 50% !important;
         animation: ws-spin 0.7s linear infinite !important;
         flex-shrink: 0 !important;
       }
 
+      .ws-toast-icon {
+        font-weight: 700 !important;
+        font-size: 14px !important;
+        flex-shrink: 0 !important;
+      }
+
+      .ws-toast-success { color: #4ade80 !important; }
+      .ws-toast-error { color: #f87171 !important; }
+
       @keyframes ws-spin {
         to { transform: rotate(360deg); }
       }
 
-      /* --- Page-level simplification tweaks --- */
+      /* --- Page skin: readable, clean --- */
       body.ws-simplified {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
-        line-height: 1.7 !important;
+        background-color: #fefefe !important;
+        color: #222 !important;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif !important;
+        line-height: 1.8 !important;
         word-spacing: 0.05em !important;
+        letter-spacing: 0.01em !important;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        body.ws-simplified {
+          background-color: #1a1a1a !important;
+          color: #e0e0e0 !important;
+        }
       }
 
       body.ws-simplified p,
       body.ws-simplified li,
       body.ws-simplified td,
       body.ws-simplified th,
-      body.ws-simplified span,
-      body.ws-simplified div {
-        line-height: 1.7 !important;
+      body.ws-simplified blockquote,
+      body.ws-simplified dd {
+        font-size: 1.05rem !important;
+        line-height: 1.8 !important;
       }
 
-      /* Reduce visual clutter: dim ads, sidebars, banners */
+      body.ws-simplified h1 { font-size: 1.8rem !important; line-height: 1.3 !important; margin-bottom: 0.75rem !important; }
+      body.ws-simplified h2 { font-size: 1.45rem !important; line-height: 1.35 !important; margin-bottom: 0.6rem !important; }
+      body.ws-simplified h3 { font-size: 1.2rem !important; line-height: 1.4 !important; margin-bottom: 0.5rem !important; }
+
+      /* Better link visibility */
+      body.ws-simplified a {
+        text-decoration: underline !important;
+        text-underline-offset: 3px !important;
+      }
+
+      /* Dim distracting elements */
       body.ws-simplified [class*="ad-"],
+      body.ws-simplified [class*="ad_"],
       body.ws-simplified [class*="sidebar"],
       body.ws-simplified [class*="banner"],
       body.ws-simplified [class*="promo"],
+      body.ws-simplified [class*="popup"],
+      body.ws-simplified [class*="modal"],
       body.ws-simplified [id*="ad-"],
+      body.ws-simplified [id*="ad_"],
       body.ws-simplified [id*="sidebar"],
       body.ws-simplified aside:not(main aside) {
-        opacity: 0.3 !important;
-        transition: opacity 0.2s !important;
+        opacity: 0.15 !important;
+        filter: grayscale(1) !important;
+        transition: opacity 0.3s, filter 0.3s !important;
       }
 
       body.ws-simplified [class*="ad-"]:hover,
+      body.ws-simplified [class*="ad_"]:hover,
       body.ws-simplified [class*="sidebar"]:hover,
       body.ws-simplified [class*="banner"]:hover,
       body.ws-simplified [class*="promo"]:hover,
+      body.ws-simplified [class*="popup"]:hover,
+      body.ws-simplified [class*="modal"]:hover,
       body.ws-simplified [id*="ad-"]:hover,
+      body.ws-simplified [id*="ad_"]:hover,
       body.ws-simplified [id*="sidebar"]:hover,
       body.ws-simplified aside:not(main aside):hover {
         opacity: 1 !important;
+        filter: none !important;
       }
 
       /* Kill animations */
@@ -213,7 +268,38 @@
       body.ws-simplified *::after {
         animation-duration: 0.001ms !important;
         animation-iteration-count: 1 !important;
+        transition-duration: 0s !important;
         scroll-behavior: auto !important;
+      }
+
+      /* Re-enable transitions on our own elements */
+      body.ws-simplified .ws-toast-base,
+      body.ws-simplified [class*="ad-"],
+      body.ws-simplified [class*="sidebar"],
+      body.ws-simplified [class*="banner"] {
+        transition-duration: 0.3s !important;
+      }
+
+      /* Hide annoying overlays */
+      body.ws-simplified [class*="cookie"],
+      body.ws-simplified [class*="Cookie"],
+      body.ws-simplified [class*="consent"],
+      body.ws-simplified [id*="cookie"],
+      body.ws-simplified marquee {
+        display: none !important;
+      }
+
+      /* --- Rewritten text marker (very subtle) --- */
+      .ws-rewritten-text {
+        background: linear-gradient(to right, rgba(37, 99, 235, 0.08), transparent) !important;
+        border-radius: 2px !important;
+        padding: 2px 0 !important;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .ws-rewritten-text {
+          background: linear-gradient(to right, rgba(96, 165, 250, 0.1), transparent) !important;
+        }
       }
 
       /* --- Skip-to-content link --- */
@@ -250,8 +336,6 @@
         font-family: Georgia, 'Times New Roman', serif !important;
         font-size: 1.1rem !important;
         line-height: 1.85 !important;
-        letter-spacing: 0.01em !important;
-        word-spacing: 0.02em !important;
       }
 
       @media (prefers-color-scheme: dark) {
@@ -273,8 +357,6 @@
         font-weight: 700 !important;
         margin-bottom: 1.5rem !important;
         line-height: 1.25 !important;
-        color: inherit !important;
-        letter-spacing: -0.02em !important;
       }
 
       #ws-reader-overlay h2 {
@@ -282,15 +364,6 @@
         font-size: 1.4rem !important;
         font-weight: 600 !important;
         margin: 2rem 0 0.75rem !important;
-        color: inherit !important;
-      }
-
-      #ws-reader-overlay h3 {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
-        font-size: 1.15rem !important;
-        font-weight: 600 !important;
-        margin: 1.5rem 0 0.5rem !important;
-        color: inherit !important;
       }
 
       #ws-reader-overlay p,
@@ -317,9 +390,7 @@
       }
 
       @media (prefers-color-scheme: dark) {
-        #ws-reader-overlay a {
-          color: #60a5fa !important;
-        }
+        #ws-reader-overlay a { color: #60a5fa !important; }
       }
 
       #ws-reader-overlay .ws-reader-close {
@@ -333,32 +404,19 @@
         height: 40px !important;
         border-radius: 50% !important;
         font-size: 18px !important;
-        font-weight: 400 !important;
         cursor: pointer !important;
         z-index: 2147483647 !important;
         box-shadow: 0 2px 12px rgba(0,0,0,0.15) !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        transition: background 0.15s ease !important;
         padding: 0 !important;
         line-height: 1 !important;
         font-family: -apple-system, BlinkMacSystemFont, sans-serif !important;
       }
 
-      @media (prefers-color-scheme: dark) {
-        #ws-reader-overlay .ws-reader-close {
-          background: #3f3f46 !important;
-        }
-      }
-
       #ws-reader-overlay .ws-reader-close:hover {
         background: #2563eb !important;
-      }
-
-      #ws-reader-overlay .ws-reader-close:focus-visible {
-        outline: 3px solid #f59e0b !important;
-        outline-offset: 3px !important;
       }
     `;
   }
@@ -371,9 +429,7 @@
     document.head.appendChild(STATE.styleEl);
     document.body.classList.add(SKIN_CLASS);
 
-    // --- DOM-level accessibility enhancements ---
-
-    // 1. Skip-to-content link
+    // Skip-to-content link
     const mainTarget =
       document.querySelector("main") ||
       document.querySelector("[role='main']") ||
@@ -386,11 +442,10 @@
       skip.id = "ws-skip-link";
       skip.href = "#" + mainTarget.id;
       skip.textContent = "Skip to main content";
-      skip.setAttribute("role", "link");
       document.body.prepend(skip);
     }
 
-    // 2. Pause all videos and auto-playing media
+    // Pause videos and audio
     document.querySelectorAll("video").forEach((v) => {
       v.pause();
       v.setAttribute("data-ws-was-playing", v.autoplay ? "1" : "0");
@@ -402,7 +457,7 @@
       a.autoplay = false;
     });
 
-    // 3. Replace animated GIFs with static version (canvas snapshot)
+    // Freeze animated GIFs
     document.querySelectorAll('img[src$=".gif"], img[src*=".gif?"]').forEach((img) => {
       if (img.dataset.wsOrigSrc) return;
       img.dataset.wsOrigSrc = img.src;
@@ -413,12 +468,10 @@
         const ctx = c.getContext("2d");
         ctx.drawImage(img, 0, 0, c.width, c.height);
         img.src = c.toDataURL("image/png");
-      } catch (_) {
-        // cross-origin images can't be snapshotted
-      }
+      } catch (_) { /* cross-origin */ }
     });
 
-    // 4. Ensure main landmark exists
+    // Ensure main landmark
     if (mainTarget && !mainTarget.getAttribute("role")) {
       mainTarget.setAttribute("role", "main");
     }
@@ -431,17 +484,14 @@
       STATE.styleEl = null;
     }
 
-    // Remove skip link
     const skip = document.getElementById("ws-skip-link");
     if (skip) skip.remove();
 
-    // Remove toast
     if (STATE.toastEl) {
       STATE.toastEl.remove();
       STATE.toastEl = null;
     }
 
-    // Restore videos
     document.querySelectorAll("video[data-ws-was-playing]").forEach((v) => {
       if (v.dataset.wsWasPlaying === "1") v.autoplay = true;
       v.removeAttribute("data-ws-was-playing");
@@ -451,13 +501,16 @@
       a.removeAttribute("data-ws-was-playing");
     });
 
-    // Restore GIFs
     document.querySelectorAll("img[data-ws-orig-src]").forEach((img) => {
       img.src = img.dataset.wsOrigSrc;
       delete img.dataset.wsOrigSrc;
     });
 
-    // Remove added role=main
+    // Remove rewritten markers
+    document.querySelectorAll(".ws-rewritten-text").forEach((el) => {
+      el.classList.remove("ws-rewritten-text");
+    });
+
     const main = document.getElementById("ws-main-content");
     if (main) {
       main.removeAttribute("role");
@@ -467,7 +520,6 @@
 
   /* ---------- Reader Overlay --------------------------------------- */
 
-  /** Heuristic: is this page article-like? */
   function isArticleLike() {
     const inputs = document.querySelectorAll(
       'input, textarea, select, [contenteditable="true"]'
@@ -496,7 +548,6 @@
     return hasArticle || textLen > 1500;
   }
 
-  /** Extract main content for reader overlay */
   function extractArticleContent() {
     const main =
       document.querySelector("article") ||
@@ -511,8 +562,7 @@
 
     const title =
       document.querySelector("h1")?.innerText ||
-      document.title ||
-      "";
+      document.title || "";
 
     const clone = main.cloneNode(true);
     clone.querySelectorAll("script, style, nav, form, iframe, [role='navigation']")
@@ -549,12 +599,6 @@
     }
   }
 
-  function escapeHTML(str) {
-    const div = document.createElement("div");
-    div.appendChild(document.createTextNode(str));
-    return div.innerHTML;
-  }
-
   /* ---------- AI Rewrite ------------------------------------------- */
 
   async function rewriteViaBackground(items) {
@@ -576,11 +620,9 @@
     });
   }
 
-  /** Batch-rewrite collected text nodes */
   async function rewriteTextNodes(nodes) {
     if (nodes.length === 0) return;
 
-    // Assign IDs and save originals
     const items = [];
     const nodeMap = new Map();
 
@@ -619,7 +661,9 @@
     }
     if (batch.length > 0) batches.push(batch);
 
-    // Process batches
+    let successCount = 0;
+    let errorMsg = null;
+
     for (let i = 0; i < batches.length; i++) {
       const b = batches[i];
       updateToast(`Simplifying text (${i + 1}/${batches.length})...`);
@@ -630,12 +674,18 @@
           const node = nodeMap.get(r.id);
           if (node && r.text && node.parentElement) {
             node.textContent = r.text;
+            // Add subtle marker to the parent element
+            node.parentElement.classList.add("ws-rewritten-text");
+            successCount++;
           }
         }
       } catch (err) {
         console.warn("[WebSimplify] Rewrite batch failed:", err.message);
+        errorMsg = err.message;
       }
     }
+
+    return { successCount, errorMsg };
   }
 
   /* ---------- MutationObserver ------------------------------------- */
@@ -697,22 +747,28 @@
 
     STATE.simplified = true;
 
-    // 1) Apply minimal skin (inject CSS + a11y enhancements)
+    // 1) Apply skin
     applySkin();
 
-    // 2) Show progress toast
-    showToast("Simplifying page...", true);
+    // 2) Show progress
+    showToast("Simplifying page...", "info");
 
-    // 3) Collect text nodes for AI rewrite
+    // 3) Collect text nodes
     const textNodes = collectTextNodes(document.body);
 
-    // 4) Start MutationObserver for dynamic content
+    if (textNodes.length === 0) {
+      updateToast("Page simplified (no text to rewrite).", "success");
+      hideToast(2000);
+      return { status: "simplified" };
+    }
+
+    // 4) Observe for dynamic content
     startObserving();
 
-    // 5) Fire off AI rewrite
-    const rewritePromise = rewriteTextNodes(textNodes);
+    // 5) Rewrite text
+    const result = await rewriteTextNodes(textNodes);
 
-    // 6) Reader overlay (only if article-like)
+    // 6) Reader overlay for article-like pages
     if (isArticleLike()) {
       const content = extractArticleContent();
       if (content) {
@@ -720,12 +776,17 @@
       }
     }
 
-    // Wait for rewrite to finish
-    await rewritePromise;
-
-    // 7) Show completion
-    updateToast("Done! Page simplified.");
-    hideToast(1500);
+    // 7) Show result
+    if (result?.errorMsg) {
+      updateToast("API error: " + result.errorMsg, "error");
+      hideToast(5000);
+    } else if (result?.successCount > 0) {
+      updateToast(`Simplified ${result.successCount} text blocks.`, "success");
+      hideToast(2500);
+    } else {
+      updateToast("Done! Page cleaned up.", "success");
+      hideToast(2000);
+    }
 
     return { status: "simplified" };
   }
@@ -756,7 +817,11 @@
     if (msg.type === "SIMPLIFY") {
       simplify()
         .then((r) => sendResponse(r))
-        .catch((e) => sendResponse({ status: "error", error: e.message }));
+        .catch((e) => {
+          showToast("Error: " + e.message, "error");
+          hideToast(5000);
+          sendResponse({ status: "error", error: e.message });
+        });
       return true;
     }
     if (msg.type === "RESTORE") {
