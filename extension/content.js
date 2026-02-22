@@ -123,7 +123,6 @@
     return `
       /* ============================================================
          WebSimplify – Clean Minimal Skin
-         Doesn't override the page's design. Only styles WS elements.
          ============================================================ */
 
       /* --- Floating status toast --- */
@@ -170,27 +169,51 @@
         to { transform: rotate(360deg); }
       }
 
-      /* --- Rewritten text: subtle inline highlight --- */
-      .ws-rewritten {
-        background: rgba(59, 130, 246, 0.07) !important;
-        border-left: 3px solid rgba(59, 130, 246, 0.4) !important;
-        padding-left: 8px !important;
-        border-radius: 0 4px 4px 0 !important;
-        transition: background 0.2s ease !important;
+      /* --- Page-level simplification tweaks --- */
+      body.ws-simplified {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+        line-height: 1.7 !important;
+        word-spacing: 0.05em !important;
       }
 
-      .ws-rewritten:hover {
-        background: rgba(59, 130, 246, 0.13) !important;
+      body.ws-simplified p,
+      body.ws-simplified li,
+      body.ws-simplified td,
+      body.ws-simplified th,
+      body.ws-simplified span,
+      body.ws-simplified div {
+        line-height: 1.7 !important;
       }
 
-      @media (prefers-color-scheme: dark) {
-        .ws-rewritten {
-          background: rgba(96, 165, 250, 0.1) !important;
-          border-left-color: rgba(96, 165, 250, 0.4) !important;
-        }
-        .ws-rewritten:hover {
-          background: rgba(96, 165, 250, 0.18) !important;
-        }
+      /* Reduce visual clutter: dim ads, sidebars, banners */
+      body.ws-simplified [class*="ad-"],
+      body.ws-simplified [class*="sidebar"],
+      body.ws-simplified [class*="banner"],
+      body.ws-simplified [class*="promo"],
+      body.ws-simplified [id*="ad-"],
+      body.ws-simplified [id*="sidebar"],
+      body.ws-simplified aside:not(main aside) {
+        opacity: 0.3 !important;
+        transition: opacity 0.2s !important;
+      }
+
+      body.ws-simplified [class*="ad-"]:hover,
+      body.ws-simplified [class*="sidebar"]:hover,
+      body.ws-simplified [class*="banner"]:hover,
+      body.ws-simplified [class*="promo"]:hover,
+      body.ws-simplified [id*="ad-"]:hover,
+      body.ws-simplified [id*="sidebar"]:hover,
+      body.ws-simplified aside:not(main aside):hover {
+        opacity: 1 !important;
+      }
+
+      /* Kill animations */
+      body.ws-simplified *,
+      body.ws-simplified *::before,
+      body.ws-simplified *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
       }
 
       /* --- Skip-to-content link --- */
@@ -220,7 +243,7 @@
         position: fixed !important;
         inset: 0 !important;
         z-index: 2147483646 !important;
-        background: #ffffff !important;
+        background: #fafafa !important;
         color: #1a1a1a !important;
         overflow-y: auto !important;
         padding: 3rem 1.5rem !important;
@@ -607,9 +630,6 @@
           const node = nodeMap.get(r.id);
           if (node && r.text && node.parentElement) {
             node.textContent = r.text;
-            if (node.parentElement) {
-              node.parentElement.classList.add("ws-rewritten");
-            }
           }
         }
       } catch (err) {
@@ -718,7 +738,6 @@
     for (const [node, originalText] of STATE.originalTexts) {
       if (node.parentElement) {
         node.textContent = originalText;
-        node.parentElement.classList.remove("ws-rewritten");
       }
     }
     STATE.originalTexts.clear();

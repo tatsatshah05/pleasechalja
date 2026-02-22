@@ -1,6 +1,7 @@
 /* ================================================================
    WebSimplify – Popup Script
    Two buttons: Simplify & Restore. Per-tab state.
+   Auto-injects content script if not already present.
    ================================================================ */
 
 const btnSimplify = document.getElementById("btn-simplify");
@@ -39,6 +40,23 @@ function sendToTab(tabId, message) {
   });
 }
 
+/** Inject content script programmatically if it's not already loaded */
+async function ensureContentScript(tabId) {
+  try {
+    // Try to ping the content script
+    await sendToTab(tabId, { type: "GET_STATE" });
+    return; // Already loaded
+  } catch {
+    // Not loaded — inject it
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"],
+    });
+    // Give it a moment to initialize
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 /* ---------- init: check current tab state -------------------------- */
 
 (async () => {
@@ -68,6 +86,9 @@ btnSimplify.addEventListener("click", async () => {
       return;
     }
 
+    // Ensure content script is injected before sending message
+    await ensureContentScript(tab.id);
+
     const result = await sendToTab(tab.id, { type: "SIMPLIFY" });
 
     if (result?.status === "error") {
@@ -96,6 +117,9 @@ btnRestore.addEventListener("click", async () => {
       setStatus("No active tab", "error");
       return;
     }
+
+    // Ensure content script is injected before sending message
+    await ensureContentScript(tab.id);
 
     const result = await sendToTab(tab.id, { type: "RESTORE" });
 
