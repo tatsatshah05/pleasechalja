@@ -3,7 +3,7 @@
    Proxies rewrite requests to the Vercel backend.
    ================================================================ */
 
-const API_URL = "https://websimplify-cloud.vercel.app/api/rewrite";
+const API_URL = "https://pleasechalja-rr8b.vercel.app/api/rewrite";
 
 /* ---------- message handler ---------------------------------------- */
 
