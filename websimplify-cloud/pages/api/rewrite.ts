@@ -1,7 +1,7 @@
 /* ================================================================
    WebSimplify – /api/rewrite
    Accepts { items: [{id, text}] }, returns { items: [{id, text}] }
-   Uses OpenAI API to rewrite text for readability.
+   Uses Groq API (free tier) with Llama to rewrite text.
    ================================================================ */
 
 import type { NextApiRequest, NextApiResponse } from "next";
@@ -30,13 +30,16 @@ interface ErrorResponse {
   error: string;
 }
 
-/* ---------- OpenAI client ------------------------------------------ */
+/* ---------- Groq client (OpenAI-compatible) ------------------------ */
 function getClient(): OpenAI {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    throw new Error("OPENAI_API_KEY not configured");
+    throw new Error("GROQ_API_KEY not configured");
   }
-  return new OpenAI({ apiKey });
+  return new OpenAI({
+    apiKey,
+    baseURL: "https://api.groq.com/openai/v1",
+  });
 }
 
 /* ---------- system prompt ------------------------------------------ */
@@ -106,7 +109,7 @@ export default async function handler(
     totalChars += text.length;
 
     if (totalChars > MAX_TOTAL_CHARS) {
-      break; // stop adding items once we exceed total char limit
+      break;
     }
 
     cleanItems.push({ id: item.id, text });
@@ -116,14 +119,14 @@ export default async function handler(
     return res.status(200).json({ items: [] });
   }
 
-  // Call OpenAI
+  // Call Groq (Llama)
   try {
     const client = getClient();
 
     const userMessage = JSON.stringify(cleanItems);
 
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "llama-3.3-70b-versatile",
       temperature: 0.3,
       max_tokens: 4000,
       messages: [
